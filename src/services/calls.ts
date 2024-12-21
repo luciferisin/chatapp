@@ -20,6 +20,29 @@ export class CallService {
   private remoteUserId: string;
   private pendingCandidates: RTCIceCandidate[] = [];
   private isNegotiating = false;
+  private mediaConstraints = {
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    },
+    video: {
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30 }
+    }
+  };
+
+  private bufferConfig = {
+    audio: {
+      maxBufferSize: 50, // milliseconds
+      targetDelay: 150   // milliseconds
+    },
+    video: {
+      maxBufferSize: 120, // milliseconds
+      targetDelay: 200    // milliseconds
+    }
+  };
 
   constructor(private chatId: string, private userId: string) {
     if (!chatId || !userId) {
@@ -96,9 +119,17 @@ export class CallService {
     };
 
     this.peerConnection.ontrack = (event) => {
-      this.remoteStream = event.streams[0];
+      const stream = event.streams[0];
+      
+      // Configure incoming stream buffering
+      if (event.track.kind === 'audio') {
+        this.configureIncomingAudioBuffer(event.track);
+      } else if (event.track.kind === 'video') {
+        this.configureIncomingVideoBuffer(event.track);
+      }
+
       if (this.onRemoteStream) {
-        this.onRemoteStream(this.remoteStream);
+        this.onRemoteStream(stream);
       }
     };
 
@@ -220,17 +251,44 @@ export class CallService {
 
   public onRemoteStream?: (stream: MediaStream) => void;
 
-  async startCall(localStream: MediaStream) {
-    if (!this.isInitialized) {
-      this.initializePeerConnection();
-    }
+  async startCall(isVideo: boolean) {
+    try {
+      const stream = await this.initializeMediaStream(isVideo);
+      
+      // Configure WebRTC with proper settings
+      const senderOptions = {
+        degradationPreference: 'maintain-framerate' as RTCDegradationPreference,
+        priority: 'high' as RTCPriorityType
+      };
 
-    this.localStream = localStream;
-    this.localStream.getTracks().forEach(track => {
-      if (this.peerConnection.connectionState !== 'closed') {
-        this.peerConnection.addTrack(track, this.localStream!);
+      stream.getTracks().forEach(track => {
+        const sender = this.peerConnection.addTrack(track, stream);
+        sender.setParameters({
+          ...sender.getParameters(),
+          ...senderOptions
+        });
+      });
+
+      // Set bandwidth constraints
+      const transceiverInit: RTCRtpTransceiverInit = {
+        direction: 'sendrecv',
+        streams: [stream],
+        sendEncodings: [{
+          maxBitrate: isVideo ? 1500000 : 64000, // 1.5 Mbps for video, 64 kbps for audio
+          priority: 'high'
+        }]
+      };
+
+      this.peerConnection.addTransceiver('audio', transceiverInit);
+      if (isVideo) {
+        this.peerConnection.addTransceiver('video', transceiverInit);
       }
-    });
+
+      return stream;
+    } catch (error) {
+      console.error('Error starting call:', error);
+      throw error;
+    }
   }
 
   async createOffer() {
@@ -300,5 +358,103 @@ export class CallService {
       callType: this.isVideo ? 'video' : 'audio',
       timestamp: serverTimestamp()
     });
+  }
+
+  private async initializeMediaStream(isVideo: boolean) {
+    try {
+      const constraints = {
+        audio: this.mediaConstraints.audio,
+        video: isVideo ? this.mediaConstraints.video : false
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
+      // Configure audio buffering
+      stream.getAudioTracks().forEach(track => {
+        const settings = track.getSettings();
+        if (settings.sampleRate) {
+          this.configureAudioBuffer(track, settings.sampleRate);
+        }
+      });
+
+      return stream;
+    } catch (error) {
+      console.error('Error getting media stream:', error);
+      throw error;
+    }
+  }
+
+  private configureAudioBuffer(track: MediaStreamTrack, sampleRate: number) {
+    const audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+    const buffer = audioContext.createBuffer(1, sampleRate, sampleRate);
+    const bufferSource = audioContext.createBufferSource();
+    
+    bufferSource.buffer = buffer;
+    bufferSource.connect(audioContext.destination);
+
+    // Add audio processing for echo cancellation and noise reduction
+    const audioProcessor = audioContext.createScriptProcessor(1024, 1, 1);
+    audioProcessor.onaudioprocess = (e) => {
+      const inputBuffer = e.inputBuffer;
+      const outputBuffer = e.outputBuffer;
+      
+      // Process audio data
+      for (let channel = 0; channel < outputBuffer.numberOfChannels; channel++) {
+        const inputData = inputBuffer.getChannelData(channel);
+        const outputData = outputBuffer.getChannelData(channel);
+        
+        // Apply audio processing
+        this.processAudioData(inputData, outputData);
+      }
+    };
+
+    source.connect(audioProcessor);
+    audioProcessor.connect(audioContext.destination);
+  }
+
+  private processAudioData(inputData: Float32Array, outputData: Float32Array) {
+    // Simple noise gate
+    const threshold = 0.01;
+    for (let i = 0; i < inputData.length; i++) {
+      outputData[i] = Math.abs(inputData[i]) > threshold ? inputData[i] : 0;
+    }
+  }
+
+  private configureIncomingAudioBuffer(track: MediaStreamTrack) {
+    const audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+    const buffer = audioContext.createBuffer(1, audioContext.sampleRate, audioContext.sampleRate);
+    
+    // Create a delay node for buffering
+    const delayNode = audioContext.createDelay(this.bufferConfig.audio.maxBufferSize / 1000);
+    delayNode.delayTime.value = this.bufferConfig.audio.targetDelay / 1000;
+    
+    source.connect(delayNode);
+    delayNode.connect(audioContext.destination);
+  }
+
+  private configureIncomingVideoBuffer(track: MediaStreamTrack) {
+    // Configure video buffering using requestVideoFrameCallback
+    if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+      const video = document.createElement('video');
+      video.srcObject = new MediaStream([track]);
+      
+      let lastFrameTime = 0;
+      const frameCallback = (now: number, metadata: any) => {
+        const frameDelay = now - lastFrameTime;
+        if (frameDelay < this.bufferConfig.video.targetDelay) {
+          // Add artificial delay if frames are coming too quickly
+          setTimeout(() => {
+            video.requestVideoFrameCallback(frameCallback);
+          }, this.bufferConfig.video.targetDelay - frameDelay);
+        } else {
+          video.requestVideoFrameCallback(frameCallback);
+        }
+        lastFrameTime = now;
+      };
+      
+      video.requestVideoFrameCallback(frameCallback);
+    }
   }
 }
