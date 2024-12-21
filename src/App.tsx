@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Navigation } from './components/Navigation';
@@ -9,8 +9,8 @@ import { Dashboard } from './components/Dashboard/Dashboard';
 import { useAuth } from './contexts/AuthContext';
 import { CallNotification } from './components/Call/CallNotification';
 import { ref, onValue, remove } from 'firebase/database';
-import { db } from './firebase';
-import { navigate } from 'react-router-dom';
+import { db } from './config/firebase';
+import { auth } from './config/firebase';
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser, loading } = useAuth();
@@ -53,6 +53,7 @@ const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 function App() {
   const [incomingCall, setIncomingCall] = useState<any>(null);
   const { currentUser } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!currentUser) return;
