@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff } from 'lucide-react';
-import { CallService } from '../../services/calls';
+import { CallManager } from '../../services/CallManager';
+import { CallState } from '../../services/CallManager';
 
 interface CallInterfaceProps {
   chatId: string;
@@ -21,43 +22,35 @@ export const CallInterface: React.FC<CallInterfaceProps> = ({
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
-  const [callService, setCallService] = useState<CallService | null>(null);
+  const [callManager] = useState(() => new CallManager(currentUserId));
+  const [callState, setCallState] = useState<CallState>(CallState.Idle);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (chatId && currentUserId && remoteUserId) {
-      try {
-        setCallService(new CallService(chatId, currentUserId));
-      } catch (error) {
-        console.error('Error creating call service:', error);
-        setError('Failed to initialize call');
-        onEndCall();
-      }
-    }
-  }, [chatId, currentUserId, remoteUserId, onEndCall]);
-
-  useEffect(() => {
-    if (!callService) return;
-
     const initializeCall = async () => {
       try {
-        callService.onRemoteStream = (stream) => {
+        // Set up remote stream handler
+        callManager.onRemoteStream((stream) => {
           if (remoteVideoRef.current) {
             remoteVideoRef.current.srcObject = stream;
           }
-        };
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: callType === 'video',
         });
 
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
+        // Listen for state changes
+        callManager.on('stateChanged', (state: CallState) => {
+          setCallState(state);
+          if (state === CallState.Failed) {
+            setError('Call failed. Please try again.');
+            onEndCall();
+          }
+        });
 
-        await callService.startCall(stream);
-        await callService.createOffer();
+        // Start the call
+        const localStream = await callManager.startCall(chatId, callType === 'video');
+        
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = localStream;
+        }
       } catch (error) {
         console.error('Error starting call:', error);
         setError('Failed to start call');
@@ -68,9 +61,9 @@ export const CallInterface: React.FC<CallInterfaceProps> = ({
     initializeCall();
 
     return () => {
-      callService.close();
+      callManager.endCall();
     };
-  }, [callService, callType, onEndCall]);
+  }, [chatId, callType, onEndCall]);
 
   const toggleMute = () => {
     const stream = localVideoRef.current?.srcObject as MediaStream;
@@ -108,7 +101,7 @@ export const CallInterface: React.FC<CallInterfaceProps> = ({
     );
   }
 
-  if (!callService) {
+  if (callState === CallState.Idle) {
     return <div>Initializing call...</div>;
   }
 

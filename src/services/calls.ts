@@ -80,15 +80,18 @@ export class CallService {
       }
     };
 
-    this.peerConnection.oniceconnectionstatechange = () => {
-      console.log('ICE Connection state:', this.peerConnection.iceConnectionState);
+    this.peerConnection.onconnectionstatechange = () => {
+      const state = this.peerConnection.connectionState;
+      console.log('Connection state changed:', state);
+      
+      // Handle failed state
+      if (state === 'failed') {
+        this.tryReconnect();
+      }
     };
 
-    this.peerConnection.onconnectionstatechange = () => {
-      console.log('Connection state:', this.peerConnection.connectionState);
-      if (this.peerConnection.connectionState === 'failed') {
-        this.close();
-      }
+    this.peerConnection.oniceconnectionstatechange = () => {
+      console.log('ICE Connection state:', this.peerConnection.iceConnectionState);
     };
 
     this.peerConnection.ontrack = (event) => {
@@ -235,5 +238,36 @@ export class CallService {
     }
     
     this.isInitialized = false;
+  }
+
+  getConnectionState(): RTCPeerConnectionState {
+    return this.peerConnection.connectionState;
+  }
+
+  private async tryReconnect() {
+    try {
+      if (this.peerConnection.iceConnectionState !== 'failed') {
+        return;
+      }
+
+      console.log('Attempting to reconnect...');
+      
+      // Create new offer to restart ICE
+      const offer = await this.peerConnection.createOffer({ iceRestart: true });
+      await this.peerConnection.setLocalDescription(offer);
+      
+      await this.sendSignal({
+        type: 'offer',
+        payload: {
+          type: offer.type,
+          sdp: offer.sdp
+        },
+        from: this.userId,
+        to: this.remoteUserId,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      console.error('Reconnection failed:', error);
+    }
   }
 }
