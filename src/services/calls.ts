@@ -1,6 +1,7 @@
 import { ref, push, set, onValue, remove, serverTimestamp } from 'firebase/database';
 import { db } from '../config/firebase';
 import { getWebRTCConfig, defaultWebRTCConfig } from '../config/webrtc';
+import { auth } from '../config/firebase';
 
 interface CallSignal {
   type: 'offer' | 'answer' | 'ice-candidate';
@@ -269,5 +270,16 @@ export class CallService {
     } catch (error) {
       console.error('Reconnection failed:', error);
     }
+  }
+
+  private async notifyIncomingCall() {
+    const callNotificationRef = ref(db, `users/${this.remoteUserId}/incomingCall`);
+    await set(callNotificationRef, {
+      callId: this.chatId,
+      callerId: this.userId,
+      callerName: auth.currentUser?.displayName,
+      callType: this.isVideo ? 'video' : 'audio',
+      timestamp: serverTimestamp()
+    });
   }
 }

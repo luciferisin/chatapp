@@ -5,8 +5,9 @@ import Picker from '@emoji-mart/react';
 import { Message } from '../../types';
 import { subscribeToChat, sendMessage } from '../../services/chat';
 import { CallInterface } from '../Call/CallInterface';
-import { ref, get } from 'firebase/database';
+import { ref, get, set, serverTimestamp } from 'firebase/database';
 import { db } from '../../config/firebase';
+import { auth } from '../../config/firebase';
 
 interface ChatContainerProps {
   chatId: string;
@@ -74,9 +75,25 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     setShowEmojiPicker(false);
   };
 
-  const startCall = (type: 'audio' | 'video') => {
-    setCallType(type);
-    setIsInCall(true);
+  const startCall = async (type: 'audio' | 'video') => {
+    if (!remoteUserId) return;
+    
+    try {
+      // Notify the other user
+      const callNotificationRef = ref(db, `users/${remoteUserId}/incomingCall`);
+      await set(callNotificationRef, {
+        callId: callChatId,
+        callerId: currentUserId,
+        callerName: auth.currentUser?.displayName,
+        callType: type,
+        timestamp: serverTimestamp()
+      });
+
+      setCallType(type);
+      setIsInCall(true);
+    } catch (error) {
+      console.error('Error starting call:', error);
+    }
   };
 
   return (
