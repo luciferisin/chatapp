@@ -116,58 +116,72 @@ export class CallService {
   }
 
   private async createAndSendOffer() {
-    const offer = await this.peerConnection.createOffer();
-    await this.peerConnection.setLocalDescription(offer);
-    
-    await this.sendSignal({
-      type: 'offer',
-      payload: {
-        type: offer.type,
-        sdp: offer.sdp
-      },
-      from: this.userId,
-      to: this.remoteUserId,
-      timestamp: Date.now()
-    });
+    try {
+      if (this.peerConnection.signalingState === 'stable') {
+        const offer = await this.peerConnection.createOffer();
+        await this.peerConnection.setLocalDescription(offer);
+        
+        await this.sendSignal({
+          type: 'offer',
+          payload: {
+            type: offer.type,
+            sdp: offer.sdp
+          },
+          from: this.userId,
+          to: this.remoteUserId,
+          timestamp: Date.now()
+        });
+      }
+    } catch (error) {
+      console.error('Error creating offer:', error);
+    }
   }
 
   private async handleSignal(signal: CallSignal) {
     try {
+      // Don't process signals if connection is closed
+      if (this.peerConnection.connectionState === 'closed') {
+        console.log('Ignoring signal in closed state');
+        return;
+      }
+
       if (signal.type === 'offer' || signal.type === 'answer') {
         const description = new RTCSessionDescription(signal.payload);
-        const shouldSetRemote = !this.peerConnection.remoteDescription ||
-          this.peerConnection.remoteDescription.type !== description.type;
-
-        if (shouldSetRemote) {
+        
+        // Check signaling state before setting remote description
+        if (this.peerConnection.signalingState !== 'closed') {
           await this.peerConnection.setRemoteDescription(description);
-        }
-
-        if (signal.type === 'offer') {
-          const answer = await this.peerConnection.createAnswer();
-          await this.peerConnection.setLocalDescription(answer);
           
-          await this.sendSignal({
-            type: 'answer',
-            payload: {
-              type: answer.type,
-              sdp: answer.sdp
-            },
-            from: this.userId,
-            to: this.remoteUserId,
-            timestamp: Date.now()
-          });
+          if (signal.type === 'offer' && 
+              this.peerConnection.signalingState === 'have-remote-offer') {
+            const answer = await this.peerConnection.createAnswer();
+            await this.peerConnection.setLocalDescription(answer);
+            
+            await this.sendSignal({
+              type: 'answer',
+              payload: {
+                type: answer.type,
+                sdp: answer.sdp
+              },
+              from: this.userId,
+              to: this.remoteUserId,
+              timestamp: Date.now()
+            });
+          }
         }
 
-        // Process any pending candidates
-        while (this.pendingCandidates.length) {
+        // Process pending candidates after remote description is set
+        while (this.pendingCandidates.length && 
+               this.peerConnection.remoteDescription) {
           const candidate = this.pendingCandidates.shift();
-          if (candidate) {
+          if (candidate && this.peerConnection.signalingState !== 'closed') {
             await this.peerConnection.addIceCandidate(candidate);
           }
         }
       } else if (signal.type === 'ice-candidate') {
         const candidate = new RTCIceCandidate(signal.payload);
-        if (this.peerConnection.remoteDescription) {
+        if (this.peerConnection.remoteDescription && 
+            this.peerConnection.signalingState !== 'closed') {
           await this.peerConnection.addIceCandidate(candidate);
         } else {
           this.pendingCandidates.push(candidate);
@@ -175,7 +189,6 @@ export class CallService {
       }
     } catch (error) {
       console.error('Error handling signal:', error);
-      throw error;
     }
   }
 
@@ -230,7 +243,12 @@ export class CallService {
       this.localStream = undefined;
     }
     
+    // Remove all event listeners
     if (this.peerConnection) {
+      this.peerConnection.onicecandidate = null;
+      this.peerConnection.ontrack = null;
+      this.peerConnection.onnegotiationneeded = null;
+      this.peerConnection.oniceconnectionstatechange = null;
       this.peerConnection.close();
     }
     
@@ -239,6 +257,7 @@ export class CallService {
     }
     
     this.isInitialized = false;
+    this.pendingCandidates = [];
   }
 
   getConnectionState(): RTCPeerConnectionState {

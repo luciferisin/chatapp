@@ -6,12 +6,11 @@ import { Navigation } from './components/Navigation';
 import { Login } from './components/Login';
 import { Signup } from './components/Signup';
 import { Dashboard } from './components/Dashboard/Dashboard';
+import { ChatPage } from './components/Chat/ChatPage';
 import { useAuth } from './contexts/AuthContext';
 import { CallNotification } from './components/Call/CallNotification';
 import { ref, onValue, remove } from 'firebase/database';
 import { db } from './config/firebase';
-import { ChatContainer } from './components/Chat/ChatContainer';
-import { ChatPage } from './components/Chat/ChatPage';
 
 const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser, loading } = useAuth();
