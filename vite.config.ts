@@ -8,15 +8,19 @@ export default defineConfig({
     exclude: ['lucide-react'],
   },
   build: {
+    cssCodeSplit: false,
     rollupOptions: {
       output: {
         manualChunks: undefined,
-      },
-    },
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name].[ext]'
+      }
+    }
   },
   server: {
-    headers: {
-      'Content-Type': 'application/javascript',
-    },
-  },
+    port: 5173,
+    strictPort: true,
+    host: true
+  }
 });
