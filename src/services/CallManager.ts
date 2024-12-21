@@ -17,6 +17,9 @@ export class CallManager extends EventEmitter {
 
   constructor(private userId: string) {
     super();
+    if (!userId) {
+      throw new Error('userId is required for CallManager');
+    }
   }
 
   async startCall(chatId: string, isVideo: boolean) {
@@ -36,7 +39,11 @@ export class CallManager extends EventEmitter {
       this.startConnectionMonitoring();
 
       // Start the call
-      await this.callService.startCall(stream);
+      if (this.callService) {
+        await this.callService.startCall(stream);
+      } else {
+        throw new Error('Call service not initialized');
+      }
       
       this.setState(CallState.Connected);
       

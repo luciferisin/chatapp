@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Phone, PhoneOff, Mic, MicOff, Video, VideoOff } from 'lucide-react';
-import { CallManager } from '../../services/CallManager';
-import { CallState } from '../../services/CallManager';
+import { CallManager, CallState } from '../../services/CallManager';
 
 interface CallInterfaceProps {
   chatId: string;
@@ -27,43 +26,52 @@ export const CallInterface: React.FC<CallInterfaceProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let mounted = true;
+
     const initializeCall = async () => {
       try {
+        if (!callManager) return;
+
         // Set up remote stream handler
         callManager.onRemoteStream((stream) => {
-          if (remoteVideoRef.current) {
+          if (remoteVideoRef.current && mounted) {
             remoteVideoRef.current.srcObject = stream;
           }
         });
 
         // Listen for state changes
         callManager.on('stateChanged', (state: CallState) => {
-          setCallState(state);
-          if (state === CallState.Failed) {
-            setError('Call failed. Please try again.');
-            onEndCall();
+          if (mounted) {
+            setCallState(state);
+            if (state === CallState.Failed) {
+              setError('Call failed. Please try again.');
+              onEndCall();
+            }
           }
         });
 
         // Start the call
         const localStream = await callManager.startCall(chatId, callType === 'video');
         
-        if (localVideoRef.current) {
+        if (localVideoRef.current && mounted) {
           localVideoRef.current.srcObject = localStream;
         }
       } catch (error) {
         console.error('Error starting call:', error);
-        setError('Failed to start call');
-        onEndCall();
+        if (mounted) {
+          setError('Failed to start call');
+          onEndCall();
+        }
       }
     };
 
     initializeCall();
 
     return () => {
+      mounted = false;
       callManager.endCall();
     };
-  }, [chatId, callType, onEndCall]);
+  }, [chatId, callType, onEndCall, callManager]);
 
   const toggleMute = () => {
     const stream = localVideoRef.current?.srcObject as MediaStream;
